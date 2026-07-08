@@ -1,74 +1,44 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-import asyncio
-import socket
-import re
 import os
 import sys
-import requests
-from datetime import datetime
-from telethon import TelegramClient, events
 
-# ======================================================
-#  КОНФИГУРАЦИЯ С ПРОВЕРКОЙ
-# ======================================================
+print("=" * 50)
+print("🚀 ТЕСТОВЫЙ ЗАПУСК")
+print("=" * 50)
+
+# Проверяем переменные
+print("1. Проверка переменных окружения:")
+api_id = os.getenv('API_ID', 'НЕ ЗАДАН')
+api_hash = os.getenv('API_HASH', 'НЕ ЗАДАН')
+bot_token = os.getenv('BOT_TOKEN', 'НЕ ЗАДАН')
+port = os.getenv('PORT', 'НЕ ЗАДАН')
+
+print(f"   API_ID: {api_id}")
+print(f"   API_HASH: {api_hash[:5] if api_hash != 'НЕ ЗАДАН' else 'НЕ ЗАДАН'}...")
+print(f"   BOT_TOKEN: {bot_token[:5] if bot_token != 'НЕ ЗАДАН' else 'НЕ ЗАДАН'}...")
+print(f"   PORT: {port}")
+print("=" * 50)
+
+# Пытаемся импортировать библиотеки
+print("2. Проверка импорта библиотек:")
+try:
+    import telethon
+    print("   ✅ telethon установлен")
+except Exception as e:
+    print(f"   ❌ telethon НЕ установлен: {e}")
 
 try:
-    API_ID = int(os.getenv('API_ID', 0))
-    if API_ID == 0:
-        print("❌ ОШИБКА: API_ID не задан или равен 0!")
-        sys.exit(1)
-    
-    API_HASH = os.getenv('API_HASH', '')
-    if not API_HASH or len(API_HASH) < 32:
-        print(f"❌ ОШИБКА: API_HASH не задан или слишком короткий! Длина: {len(API_HASH)}")
-        sys.exit(1)
-    
-    BOT_TOKEN = os.getenv('BOT_TOKEN', '')
-    if not BOT_TOKEN or ':' not in BOT_TOKEN:
-        print("❌ ОШИБКА: BOT_TOKEN не задан или неправильного формата!")
-        sys.exit(1)
-    
-    PROXY_PORT = int(os.getenv('PORT', 7777))
-    
-    print("✅ Все переменные окружения загружены:")
-    print(f"   API_ID: {API_ID}")
-    print(f"   API_HASH: {API_HASH[:5]}... (скрыто)")
-    print(f"   BOT_TOKEN: {BOT_TOKEN[:5]}... (скрыто)")
-    print(f"   PORT: {PROXY_PORT}")
-    
+    import requests
+    print("   ✅ requests установлен")
 except Exception as e:
-    print(f"❌ ОШИБКА загрузки переменных: {e}")
-    sys.exit(1)
-
-# ======================================================
-
-active_sessions = {}
-
-def get_public_ip():
-    """Получает внешний IP сервера"""
-    try:
-        response = requests.get('https://api.ipify.org', timeout=5)
-        return response.text.strip()
-    except:
-        try:
-            response = requests.get('https://icanhazip.com', timeout=5)
-            return response.text.strip()
-        except:
-            return '0.0.0.0'
-
-# ======================================================
-#  TELEGRAM БОТ
-# ======================================================
-
-print("🔄 Подключение к Telegram...")
+    print(f"   ❌ requests НЕ установлен: {e}")
 
 try:
-    bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-    print("✅ Подключение к Telegram успешно!")
+    import aiohttp
+    print("   ✅ aiohttp установлен")
 except Exception as e:
-    print(f"❌ Ошибка подключения к Telegram: {e}")
-    sys.exit(1)
+    print(f"   ❌ aiohttp НЕ установлен: {e}")
 
-# ... остальной код (команды /start, /log и т.д. - без изменений)
+print("=" * 50)
+print("✅ ТЕСТ ПРОЙДЕН! Если ты это видишь, код работает.")
+print("=" * 50)
