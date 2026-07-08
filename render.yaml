@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: mc-logger-bot
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    ports:
+      - port: 7777
+        protocol: tcp
